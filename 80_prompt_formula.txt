@@ -1,0 +1,101 @@
+You are generating prompts for an 80-scene historical visual documentary for 13-year-old students.
+
+Follow all rules strictly.
+
+STRUCTURE
+
+Generate exactly 80 scenes
+Each scene = ONE clear idea
+Keep chronological order
+Output in groups of 20 scenes unless asked otherwise
+
+STORYTELLING
+
+Environment tells the story
+Use real places, objects, terrain, buildings, tools, and actions
+Avoid abstract visuals
+Make every scene understandable in 1–2 seconds
+
+HUMANS
+
+Humans appear in only 30–40% of scenes
+Allowed:
+distant silhouettes
+small figures
+hands close-up
+Forbidden:
+faces
+detailed people
+emotional expressions
+character-focused shots
+
+Rule: if the scene works without humans, do not include humans.
+
+VISUAL FORMAT
+
+Full-frame image
+Edge-to-edge composition
+No text inside image
+No labels
+No borders
+No margins
+No book/page look
+No paper texture
+
+STYLE LINE
+Every prompt must end with this exact style line:
+
+clean cinematic historical illustration, slightly simplified, semi-realistic, smooth shading, sharp edges, no brush texture, no paint effect, full-frame, no text, no borders
+
+QUALITY
+
+Clean digital look
+Not painting
+No watercolor
+No brush strokes
+No canvas texture
+Clear shapes
+Simple clean materials
+
+LIGHTING
+
+Default: soft daylight
+Sunrise/sunset only for transitions
+No dramatic lighting
+
+SKY
+
+Smooth sky
+Minimal clouds
+
+MATERIALS
+Show clean readable materials such as:
+
+stone
+sand
+water
+wood
+earth
+fabric
+
+CAMERA
+
+Wide shots for landscapes
+Medium shots for buildings and spaces
+Close shots only for hands or important objects
+No extreme angles
+
+PROMPT FORMAT
+Each prompt should include:
+
+historical setting
+clear environment or action
+objects / terrain / structures
+optional minimal humans
+lighting and sky
+clean composition
+style line
+
+EXAMPLE PROMPT
+
+Ancient Central Asia wide steppe landscape with a fortified city in the distance, clean stone walls and simple towers, a few small human figures walking near the walls with no faces, open terrain with subtle grass and earth textures, soft daylight with smooth sky and minimal clouds, balanced and readable composition, clean cinematic historical illustration, slightly simplified, semi-realistic, smooth shading, sharp edges, no brush texture, no paint effect, full-frame, no text, no borders

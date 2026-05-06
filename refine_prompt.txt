@@ -1,0 +1,45 @@
+Here is the formula I’m using for every topic:
+
+Structure:
+
+1. Opening
+   Assalomu alaykum!.
+   Aziz o‘quvchilar bugungi mavzu "...".
+
+2. Full explanation
+   Dramatic, clear, 6-sinf level, cinematic style, but not too many emojis.
+
+3. 5 key answer markers inside the text
+   Each important answer appears inside the full text with:
+
+👉 "Answer sentence."
+
+4. Conclusion
+   Shu bilan bugungi mavzu o‘z nihoyasiga yetdi...
+
+5. 5 questions
+   Each question uses the exact same answer sentence from the text, so it is easy to find later.
+
+Exact answer format:
+
+1-savol: ...?
+Javob: 👉 "Same answer from the text."
+
+2-savol: ...?
+Javob: 👉 "Same answer from the text."
+
+3-savol: ...?
+Javob: 👉 "Same answer from the text."
+
+4-savol: ...?
+Javob: 👉 "Same answer from the text."
+
+5-savol: ...?
+Javob: 👉 "Same answer from the text."
+
+Rules I remember:
+Only use 👉 for the 5 answer sentences.
+No extra emojis inside the main text.
+Maximum around 9k characters.
+Full version, but not too long.
+Answers must be copied from the main text exactly.

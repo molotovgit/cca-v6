@@ -1,0 +1,40 @@
+# Secrets — DO NOT commit
+.env
+accounts.json
+lessons.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Pipeline output (generated content; large)
+chapters/
+refined/
+prompts/
+images/
+zips/
+videos/
+generated/
+lessons/
+
+# Browser persistent profiles (cookies, login state, user-specific)
+chrome_keepalive_profile/
+chrome_gemini_profile/
+chrome-chatgpt-cdp/
+chrome-gemini-cdp/
+
+# Submit/save runtime state (per-chapter, rebuilt on each run)
+.cca/
+
+# Node deps
+node_modules/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/

@@ -1,0 +1,30 @@
+{
+  "_doc": [
+    "v6 multi-account credential file. Copy to accounts.json and fill in.",
+    "Order matters — accounts are tried in order.",
+    "On 1095 / quota / sign-in failure, the rotator advances to the next account in the list.",
+    "State is tracked in .cca/active_accounts.json (auto-created).",
+    "accounts.json is gitignored — never commit real credentials."
+  ],
+
+  "chatgpt": [
+    {
+      "label": "primary",
+      "email": "your-chatgpt@example.com",
+      "password": "your-password"
+    }
+  ],
+
+  "gemini": [
+    {
+      "label": "primary",
+      "email": "your-gemini-1@example.com",
+      "password": "your-password-1"
+    },
+    {
+      "label": "backup-1",
+      "email": "your-gemini-2@example.com",
+      "password": "your-password-2"
+    }
+  ]
+}

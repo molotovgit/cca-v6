@@ -1,0 +1,34 @@
+# ============================================================
+#  v5 lessons list — one chapter per line.
+# ============================================================
+#
+#  FORMAT (full row): grade,lang,subject,chapter
+#    grade   = 5..11
+#    lang    = uz | ru
+#    subject = subject name (fuzzy-matched in Notion)
+#    chapter = chapter number (>= 1)
+#
+#  SHORT FORM: a line with just a chapter number inherits
+#    grade/lang/subject from the most recent full row above.
+#
+#  Lines starting with "#" are comments. Blank lines OK.
+#  Trailing "# blah" comments at end of a line are stripped.
+#
+# ------------------------------------------------------------
+#  EXAMPLE — process 5 chapters of one subject + 2 of another:
+# ------------------------------------------------------------
+#
+#   7,uz,jahon tarixi,11
+#   12
+#   13
+#   14
+#   15
+#   8,uz,fizika,1
+#   2
+#
+# ============================================================
+#  EDIT BELOW — delete the example and put your real list.
+#  Save and close this file when you're done.
+# ============================================================
+
+7,uz,jahon tarixi,11
