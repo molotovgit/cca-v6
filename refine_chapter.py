@@ -161,6 +161,26 @@ def main() -> None:
     dt = time.time() - t0
     print(f"[refine] response received ({len(response):,} chars in {dt:.1f}s)")
 
+    # Length validation: the refined chapter must be 5,000–9,000 characters.
+    # Below 5k almost always means ChatGPT returned a meta-acknowledgement
+    # ("Tushundim. Sizning format...") instead of the rewritten chapter, or
+    # was cut off. Fail loudly — and DO NOT write the bad output to disk —
+    # so the stage fails clean and the next run re-attempts REFINE from
+    # scratch (rather than the file-existence skip silently re-using bad
+    # content).
+    REFINE_MIN_CHARS = 5000
+    REFINE_MAX_CHARS = 9000
+    rlen = len(response)
+    if rlen < REFINE_MIN_CHARS or rlen > REFINE_MAX_CHARS:
+        kind = "too short — likely a meta-acknowledgement, not the rewritten chapter" if rlen < REFINE_MIN_CHARS else "too long — exceeds the 9k cap"
+        # First 200 chars of the response so we can see WHAT ChatGPT actually returned
+        head = response[:200].replace("\n", " | ")
+        raise SystemExit(
+            f"[refine] OUT-OF-BOUNDS output: {rlen:,} chars (allowed: {REFINE_MIN_CHARS:,}-{REFINE_MAX_CHARS:,}) — {kind}\n"
+            f"        first 200 chars: {head}\n"
+            f"        not writing to disk; next run will re-attempt REFINE."
+        )
+
     out_path = stage_path(input_path, "refined")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(response, encoding="utf-8")

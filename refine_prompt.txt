@@ -42,8 +42,8 @@ Javob: 👉 "Same answer from the text."
 Rules:
 - Only use 👉 for the 5 answer sentences.
 - No extra emojis inside the main text.
-- Maximum around 9k characters.
+- LENGTH: the rewritten chapter must be BETWEEN 5,000 and 9,000 characters. This is a HARD REQUIREMENT, not a guideline. If you produce less than 5,000 characters the output is unusable; expand the explanation, add more historical detail, more vivid description, more transitions. If you exceed 9,000 characters, trim. Aim for ~7,000–8,000.
 - Full version, but not too long.
 - Answers must be copied from the main text exactly.
 
-REMINDER: output only the rewritten chapter, starting with "Assalomu alaykum!". No preamble, no acknowledgement, no commentary on the format.
+REMINDER: output only the rewritten chapter, starting with "Assalomu alaykum!". No preamble, no acknowledgement, no commentary on the format. Length must be between 5,000 and 9,000 characters.
