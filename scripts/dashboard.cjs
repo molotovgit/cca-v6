@@ -36,8 +36,14 @@ function tailLines(p, n) {
 function findLatestLog() {
   const reports = path.join(REPO, 'reports');
   if (!fileExists(reports)) return null;
+  // Exclude the dashboard's own stdout/stderr logs (dashboard.log /
+  // dashboard.err) — they have a more recent mtime than batch.log because
+  // the dashboard polls every 2s, but they don't contain pipeline output.
+  // Picking dashboard.log here makes parseLog see no CHAPTER/STAGE lines
+  // and the UI shows an empty state.
   const candidates = fs.readdirSync(reports)
     .filter(f => f.endsWith('.log'))
+    .filter(f => !/^dashboard\b/i.test(f))
     .map(f => ({ name: f, path: path.join(reports, f), mtime: fs.statSync(path.join(reports, f)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime);
   return candidates[0] || null;
@@ -60,8 +66,40 @@ function parseLog(lines) {
     lessonsList: [],               // from BATCH header
   };
 
+  // Track current grade/lang/subject so the launch_all.bat-style CHAPTER
+  // banner (which doesn't itself contain those) can inherit them.
+  let curGrade = null, curLang = null, curSubject = null;
+
   for (const line of lines) {
-    // Lesson banner: ═══ LESSON 1/2 : G7/uz/jahon tarixi/ch19 ═══
+    // launch_all.bat-style banner: "#  CHAPTER 1/6 : G8 / jahon tarixi / ch 15"
+    const chapterMatch = line.match(/CHAPTER (\d+)\/(\d+)\s*:\s*G(\d+)\s*\/\s*([^\/]+?)\s*\/\s*ch\s*(\d+)/);
+    if (chapterMatch) {
+      const grade = parseInt(chapterMatch[3]);
+      const subject = chapterMatch[4].trim();
+      const chapter = parseInt(chapterMatch[5]);
+      state.currentLesson = {
+        idx:     parseInt(chapterMatch[1]),
+        total:   parseInt(chapterMatch[2]),
+        grade,
+        lang:    curLang || 'uz',
+        subject,
+        chapter,
+      };
+      curGrade = grade; curSubject = subject;
+      state.stages = { FETCH: 'pending', REFINE: 'pending', PROMPTS: 'pending', IMAGES: 'pending', UPLOAD: 'pending' };
+      state.stageDurations = {};
+    }
+
+    // [DEBUG] CCA_LANG=uz CCA_SUBJECT=jahon tarixi CCA_GRADE=8
+    const debugEnv = line.match(/CCA_LANG=(\w+)\s+CCA_SUBJECT=(.+?)\s+CCA_GRADE=(\d+)/);
+    if (debugEnv) {
+      curLang = debugEnv[1];
+      curSubject = debugEnv[2].trim();
+      curGrade = parseInt(debugEnv[3]);
+      if (state.currentLesson) state.currentLesson.lang = curLang;
+    }
+
+    // Legacy v5 banner: ═══ LESSON 1/2 : G7/uz/jahon tarixi/ch19 ═══
     const lessonMatch = line.match(/LESSON (\d+)\/(\d+) : G(\d+)\/(\w+)\/(.+?)\/ch(\d+)/);
     if (lessonMatch) {
       state.currentLesson = {
@@ -73,6 +111,7 @@ function parseLog(lines) {
         chapter: parseInt(lessonMatch[6]),
       };
       state.stages = { FETCH: 'pending', REFINE: 'pending', PROMPTS: 'pending', IMAGES: 'pending', UPLOAD: 'pending' };
+      state.stageDurations = {};
     }
     // Stage start: ─── STAGE 1/5 FETCH ───
     const stageStart = line.match(/STAGE \d\/5 (FETCH|REFINE|PROMPTS|IMAGES|UPLOAD)/);
