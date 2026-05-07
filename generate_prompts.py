@@ -264,29 +264,66 @@ def main() -> None:
             f"The 80-scene story is CHRONOLOGICAL across the chapter; this batch covers approximately the {seg_pct_lo}%-{seg_pct_hi}% segment of the chapter narrative. Stay within that segment of the story."
         )
 
-        print(f"\n[prompts] batch {batch_idx + 1}/{NUM_BATCHES} ({start}-{end}) — opening fresh conversation")
-        cg.new_conversation(page)
+        # Retry up to 2 times on JSON-parse failures. ChatGPT sometimes
+        # ignores the structured-output instruction and returns a refined-
+        # chapter-style response (probably influenced by Memories or by
+        # confusion between this chapter's source and prior conversations).
+        # Retrying with a fresh conversation + a stronger anti-prose
+        # preamble usually recovers.
+        MAX_PROMPT_RETRIES = 3
+        last_err = None
+        response = None
+        for attempt in range(1, MAX_PROMPT_RETRIES + 1):
+            print(f"\n[prompts] batch {batch_idx + 1}/{NUM_BATCHES} ({start}-{end}) — opening fresh conversation (attempt {attempt}/{MAX_PROMPT_RETRIES})")
+            cg.new_conversation(page)
 
-        prompt = (
-            formula.strip()
-            + "\n\n---\n\n"
-            + batch_instruction
-            + "\n\n---\n\nSOURCE TEXT (refined chapter):\n\n"
-            + refined.strip()
-        )
-        print(f"[prompts]   sending {len(prompt):,} chars")
+            # On retries, prepend a stronger preamble that explicitly tells
+            # ChatGPT not to write prose and not to use any cross-conversation
+            # memory.
+            if attempt == 1:
+                preamble = ""
+            else:
+                preamble = (
+                    "IMPORTANT: Output ONLY a raw JSON array. Do NOT write a chapter, "
+                    "do NOT write prose, do NOT include 'Assalomu alaykum', do NOT "
+                    "use any prior conversation memory. Your previous attempt returned "
+                    "prose text; this is wrong. Start your response with '[' and end "
+                    "with ']'.\n\n---\n\n"
+                )
 
-        t0 = time.time()
-        response = cg.send_and_collect(page, prompt, max_ms=args.max_seconds_per_batch * 1000)
-        dt = time.time() - t0
-        print(f"[prompts]   response received: {len(response):,} chars in {dt:.1f}s")
+            prompt = (
+                preamble
+                + formula.strip()
+                + "\n\n---\n\n"
+                + batch_instruction
+                + "\n\n---\n\nSOURCE TEXT (refined chapter):\n\n"
+                + refined.strip()
+            )
+            print(f"[prompts]   sending {len(prompt):,} chars")
+
+            t0 = time.time()
+            response = cg.send_and_collect(page, prompt, max_ms=args.max_seconds_per_batch * 1000)
+            dt = time.time() - t0
+            print(f"[prompts]   response received: {len(response):,} chars in {dt:.1f}s")
+
+            try:
+                entries_raw = extract_json_array(response)
+                # Parse OK → break out of retry loop
+                last_err = None
+                break
+            except ValueError as e:
+                last_err = e
+                # Show the first 200 chars of what we got so the operator
+                # can see whether it was prose, partial JSON, or fence-wrapped.
+                head = (response[:200] or "").replace("\n", " | ")
+                print(f"[prompts]   batch {batch_idx + 1} attempt {attempt} parse failed: {e}")
+                print(f"[prompts]   response head: {head}")
+                continue
+
+        if last_err is not None:
+            raise SystemExit(f"[prompts] batch {batch_idx + 1} parse failed after {MAX_PROMPT_RETRIES} attempts: {last_err}")
 
         raw_batches.append(response)
-
-        try:
-            entries_raw = extract_json_array(response)
-        except ValueError as e:
-            raise SystemExit(f"[prompts] batch {batch_idx + 1} parse failed: {e}")
 
         if len(entries_raw) != BATCH_SIZE:
             print(f"[prompts]   WARNING: expected {BATCH_SIZE} entries, got {len(entries_raw)}")
