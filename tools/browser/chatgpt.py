@@ -457,14 +457,131 @@ def login_via_google(page: Page, email: str, password: str,
             )
         print("[login] clicked Continue with Google")
 
-    # ── Step 3: Wait for Google email field, then fill ──
-    print("[login] waiting for Google email page...")
-    _wait_for(
-        lambda: page.locator('input[type="email"]').count() > 0
-                or page.locator('input[type="password"]').count() > 0,
-        timeout_s=45,
-        label="Google email/password page",
-    )
+    # ── Step 3: Wait for Google email page or chooser ──
+    # State machine: after "Continue with Google", we may pass through an
+    # OpenAI intermediate page (auth.openai.com/log-in-or-create-account)
+    # before reaching either:
+    #   (a) Google email form        — input[type="email"] visible
+    #   (b) Google account chooser   — URL contains "accountchooser"
+    #   (c) Google password page     — input[type="password"] visible (if a
+    #                                   previous attempt cached the email)
+    # We poll until ONE of these stable states is reached (or we time out).
+    # Then if (b), click "Use another account" so we pivot to (a).
+    print("[login] waiting for Google email page or chooser...")
+    state_deadline = time.time() + 120
+    state = None
+    last_url_logged = ""
+    clicked_openai_continue = False  # the OpenAI intermediate page has its own
+                                     # 'Continue with Google' button — click once
+    while time.time() < state_deadline:
+        cur_url = (page.url or "").lower()
+        if cur_url != last_url_logged:
+            print(f"[login] url -> {cur_url[:120]}")
+            last_url_logged = cur_url
+
+        # auth.openai.com/log-in-or-create-account is OpenAI's auth landing
+        # page that sometimes sits between chatgpt.com and Google. It has
+        # its OWN 'Continue with Google' button that must be clicked to
+        # actually redirect to Google. Click it ONCE.
+        if "auth.openai.com" in cur_url and not clicked_openai_continue:
+            print("[login] on auth.openai.com intermediate page — clicking Continue with Google here too")
+            for sel in (
+                'button:has-text("Continue with Google")',
+                'a:has-text("Continue with Google")',
+                'button[data-provider="google"]',
+                'a[href*="google.com"]',
+            ):
+                try:
+                    btn = page.locator(sel).first
+                    if btn.count() > 0 and btn.is_visible():
+                        print(f"[login] clicked Continue-with-Google on auth.openai.com (sel={sel})")
+                        btn.click()
+                        clicked_openai_continue = True
+                        break
+                except Exception as e:
+                    print(f"[login] openai-continue probe [{sel}] error: {e}")
+            time.sleep(2.0)
+            continue
+
+        # Skip chatgpt.com transient
+        if "chatgpt.com" in cur_url:
+            time.sleep(0.8); continue
+
+        # Chooser is unambiguous from URL alone.
+        if "accountchooser" in cur_url:
+            state = "chooser"; break
+        # Only inspect form fields on actual Google sign-in pages.
+        if "accounts.google" in cur_url:
+            try:
+                email_loc = page.locator('input[type="email"]').first
+                if email_loc.count() > 0 and email_loc.is_visible():
+                    state = "email"; break
+            except Exception:
+                pass
+            try:
+                pw_loc = page.locator('input[type="password"]').first
+                if pw_loc.count() > 0 and pw_loc.is_visible():
+                    state = "password"; break
+            except Exception:
+                pass
+        time.sleep(0.8)
+
+    print(f"[login] settled state={state}  URL host: {(page.url or '')[:100]}")
+    if state is None:
+        raise RuntimeError(f"login: no Google email / chooser / password page after 60s. URL={page.url}")
+
+    # ── Step 3a: Account-chooser handling (mirror of gemini.py fix) ──
+    # When the user previously signed in to a Google account in this Chrome
+    # profile, Google redirects ChatGPT's OAuth through
+    # accounts.google.com/v3/signin/accountchooser BEFORE showing the email
+    # form. The chooser has a hidden input[type="email"] in the DOM that
+    # ISN'T actionable, so the fill() below would time out. Click
+    # "Use another account" / "Использовать другой аккаунт" so the email
+    # form actually appears.
+    if state == "chooser":
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=10_000)
+        except Exception:
+            pass
+        time.sleep(1.5)  # let dynamic chooser content render
+
+        # ALWAYS click "Use another account" / "Использовать другой аккаунт" —
+        # the user's explicit policy. Do NOT auto-pick the existing row even
+        # if the target email is listed on the chooser.
+        click_strategies = [
+            ('text="Use another account"',                       "text-en"),
+            ('text="Использовать другой аккаунт"',                "text-ru"),
+            ('div[role="link"]:has-text("Use another account")', "role-link-en"),
+            ('div[role="link"]:has-text("другой аккаунт")',      "role-link-ru"),
+            ('li:has-text("Use another account")',               "li-en"),
+            ('li:has-text("другой аккаунт")',                    "li-ru"),
+        ]
+        clicked_use_another = False
+        for sel, label in click_strategies:
+            try:
+                loc = page.locator(sel).first
+                cnt = loc.count()
+                vis = loc.is_visible() if cnt > 0 else False
+                print(f"[login] use-another probe [{label}] count={cnt} vis={vis}")
+                if cnt > 0 and vis:
+                    print(f"[login] account-chooser detected; clicking 'Use another account' (sel={sel})")
+                    loc.click()
+                    clicked_use_another = True
+                    break
+            except Exception as e:
+                print(f"[login] use-another probe [{label}] error: {e}")
+                continue
+        if not clicked_use_another:
+            raise RuntimeError(
+                "login: on accountchooser but no 'Use another account' selector matched"
+            )
+
+        try:
+            page.wait_for_selector('input[type="email"]:visible', timeout=15_000)
+            print("[login] email form appeared after 'Use another account' click")
+        except Exception as e:
+            raise RuntimeError(f"login: email form did not appear after 'Use another account' click: {e}")
+        time.sleep(1.5)
 
     if page.locator('input[type="email"]').count() > 0:
         # Wait for the field to settle, then fill.
