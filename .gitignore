@@ -2,6 +2,11 @@
 .env
 accounts.json
 lessons.txt
+# Per-machine launch wrappers (may embed credentials)
+launch.bat
+launch_*.bat
+# Local diagnostic / one-off test scripts
+test_*.py
 
 # Python
 __pycache__/

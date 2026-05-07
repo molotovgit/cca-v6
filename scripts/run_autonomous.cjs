@@ -81,6 +81,16 @@ const ROTATION_1095_THRESHOLD = envInt('CCA_ROTATION_1095_THRESHOLD', 3);    // 
 const ROTATION_WINDOW_MS      = envInt('CCA_ROTATION_WINDOW_MS', 120_000);   // alerts within last 2 min
 const ROTATION_COOLDOWN_MS    = envInt('CCA_ROTATION_COOLDOWN_MS', 60_000);  // min gap between rotations
 const MAX_ROTATIONS           = envInt('CCA_MAX_ROTATIONS', 5);              // bail after N — likely a real problem
+// Silent-blocker fallback: when detectBlocker() in save_images.cjs misses the
+// 1095 UI (tab still shows "Stop", language mismatch, banner under different DOM),
+// no alerts get written and the rotation path never fires. The orchestrator
+// just sees pending tabs stuck forever. This threshold catches that — if
+// pending stays >= SILENT_BLOCKER_PENDING_MIN with zero progress for this long,
+// rotate the account anyway. Default 6 catches partial-block cases (some tabs
+// 1095, some still trying) before they grow to the full maxOpen=10. Set the
+// stall to 0 to disable entirely.
+const SILENT_BLOCKER_STALL_MS    = envInt('CCA_SILENT_BLOCKER_STALL_MS',    60_000); // 1 min
+const SILENT_BLOCKER_PENDING_MIN = envInt('CCA_SILENT_BLOCKER_PENDING_MIN', 6);      // ≥6 stuck tabs
 
 function readJsonOr(file, def) {
   try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch (_) { return def; }
@@ -437,6 +447,20 @@ process.on('SIGTERM', () => { console.log('\n[orch] SIGTERM received, shutting d
     if (rotateReason && rotationCooldownOk && !rotationInFlight) {
       console.log(`${ts()} [ORCH] blocker alerts detected (${rotateReason}) — rotating account`);
       triggerRotation(rotateReason);
+      return;
+    }
+
+    // SILENT-BLOCKER FALLBACK (v6 phase 3): time-based rotation trigger for
+    // when detectBlocker() in the saver missed the 1095 UI. Symptom: pending
+    // tabs stuck (>= SILENT_BLOCKER_PENDING_MIN) with zero saves for a long
+    // time, no blocker alerts recorded. Rotate the account anyway — preserves
+    // saved_indices so we resume from where we left off after the new account
+    // signs in.
+    const tabsStuck = pending >= SILENT_BLOCKER_PENDING_MIN;
+    if (SILENT_BLOCKER_STALL_MS > 0 && tabsStuck && stalledMs > SILENT_BLOCKER_STALL_MS &&
+        rotationCooldownOk && !rotationInFlight) {
+      console.log(`${ts()} [ORCH] silent-blocker fallback: pending=${pending} (>=${SILENT_BLOCKER_PENDING_MIN}) stall=${Math.floor(stalledMs/1000)}s — rotating account (no explicit 1095 alerts but symptom matches)`);
+      triggerRotation('silent-blocker');
       return;
     }
 

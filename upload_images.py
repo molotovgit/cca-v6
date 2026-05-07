@@ -181,6 +181,39 @@ def main() -> None:
     out_zip    = REPO / "zips"   / f"g{args.grade}-{args.lang}" / subj_slug / f"{base}.zip"
     out_marker = out_zip.with_suffix(".uploaded.json")
 
+    # 1.5  STALE-ZIP DETECTION (must run BEFORE the marker idempotency check,
+    #      otherwise a stale zip whose sha256 still matches the marker would
+    #      be skipped and the OLD refined MD would be re-confirmed as uploaded).
+    #      A zip is "stale" if any of:
+    #         - corrupt
+    #         - lacks the refined MD entry (legacy images-only zip)
+    #         - the refined MD bytes inside the zip differ from refined_md on disk
+    #      In all cases we delete the zip + marker so the rest of the flow
+    #      rebuilds fresh and re-uploads.
+    stale_reason = None
+    if out_zip.exists():
+        try:
+            with zipfile.ZipFile(out_zip, "r") as zf:
+                if refined_md.name not in zf.namelist():
+                    stale_reason = "zip is images-only (legacy, no refined MD)"
+                else:
+                    with zf.open(refined_md.name) as fz:
+                        zip_md = fz.read()
+                    disk_md = refined_md.read_bytes()
+                    if zip_md != disk_md:
+                        stale_reason = (
+                            f"refined MD inside zip differs from disk "
+                            f"(zip:{len(zip_md):,}b vs disk:{len(disk_md):,}b)"
+                        )
+        except zipfile.BadZipFile:
+            stale_reason = "zip is corrupt"
+    if stale_reason:
+        print(f"[zip] STALE — {stale_reason}; deleting zip + marker so they rebuild")
+        try: out_zip.unlink()
+        except FileNotFoundError: pass
+        try: out_marker.unlink()
+        except FileNotFoundError: pass
+
     # 2. Idempotency: skip if marker matches current zip
     if out_marker.exists() and out_zip.exists():
         try:
@@ -192,20 +225,8 @@ def main() -> None:
         except Exception as e:
             print(f"[upload] marker unreadable ({e}) — re-uploading")
 
-    # 3. Create zip if missing OR if existing zip predates the refined-MD bundling
-    #    (older zips were images-only — detect by checking namelist for the MD).
-    needs_rebuild = False
-    if out_zip.exists():
-        try:
-            with zipfile.ZipFile(out_zip, "r") as zf:
-                if refined_md.name not in zf.namelist():
-                    print(f"[zip] existing zip is images-only (legacy) — regenerating to include refined MD")
-                    needs_rebuild = True
-        except zipfile.BadZipFile:
-            print(f"[zip] existing zip is corrupt — regenerating")
-            needs_rebuild = True
-    if needs_rebuild and out_zip.exists():
-        out_zip.unlink()
+    # 3. Create zip if missing
+    needs_rebuild = False  # legacy var kept for downstream compatibility
 
     if not out_zip.exists():
         create_zip(images_dir, out_zip, refined_md)

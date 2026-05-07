@@ -93,22 +93,52 @@ def login_chatgpt(pw, port: int, email: str, password: str) -> int:
 
 def _force_signout_gemini(context, port: int) -> None:
     """Navigate to Google Logout URL to clear the current session before signing
-    in to a different account (rotation case)."""
+    in to a different account (rotation case).
+
+    BUG FIX: previously this only navigated ONE tab to /Logout, leaving every
+    OTHER Google/Gemini tab (the dozens that submit_prompts.cjs opened during
+    image generation) alive on gemini.google.com/app showing CACHED UI. The
+    subsequent login_via_google_human::_pick_best_page would pick one of those
+    stale tabs, see a prompt textarea, and falsely declare "signed in" without
+    ever running the actual sign-in flow. Then submit_prompts would respawn
+    and enter prompts on tabs that weren't really authenticated.
+
+    Fix: open a fresh anchor tab first (so Chrome doesn't collapse), close ALL
+    pre-existing Google/Gemini tabs, THEN navigate the anchor to /Logout. After
+    this, only the anchor tab remains, on accounts.google.com — no stale UI
+    to fool the post-login verification."""
     import time
-    page = None
-    for p in context.pages:
-        if "gemini.google.com" in (p.url or "") or "google.com" in (p.url or ""):
-            page = p
-            break
-    if page is None:
-        page = context.new_page()
+
+    # 1. Anchor tab first (guarantees the context isn't empty when we close others)
+    anchor = context.new_page()
+
+    # 2. Close every pre-existing Google/Gemini tab — their cached UI is what
+    #    fooled the verification. The submit_prompts/save_images children
+    #    were already killed by triggerRotation, but their tabs persist in Chrome.
+    closed = 0
+    for p in list(context.pages):
+        if p is anchor:
+            continue
+        url = p.url or ""
+        if "gemini.google.com" in url or "google.com" in url:
+            try:
+                p.close()
+                closed += 1
+            except Exception:
+                pass
+    if closed:
+        print(f"[gemini] closed {closed} stale Google/Gemini tabs before sign-out")
+        time.sleep(1)
+
+    # 3. Now navigate the anchor to /Logout (clean slate)
     try:
         print("[gemini] force sign-out (rotation): navigating to accounts.google.com/Logout")
-        page.goto("https://accounts.google.com/Logout", wait_until="domcontentloaded", timeout=30_000)
+        anchor.goto("https://accounts.google.com/Logout", wait_until="domcontentloaded", timeout=30_000)
         time.sleep(3)
     except Exception as e:
         print(f"[gemini] force-signout warning: {e}")
-    # Close any chrome:// intercept tabs the logout may have spawned
+
+    # 4. Close any chrome:// intercept tabs the logout may have spawned
     gm.close_intercept_tabs(port)
 
 
@@ -127,14 +157,56 @@ def login_gemini(pw, port: int, email: str, password: str, *, force_resignin: bo
             return 3
         if force_resignin:
             _force_signout_gemini(browser.contexts[0], port)
-        # Find the right context+page: gemini.py:find_signed_in_gemini scans all
-        # contexts but raises if none has a Gemini tab; for a fresh profile we
-        # just want the first (persistent) context and we'll open the tab ourselves.
-        try:
-            context, page = gm.find_signed_in_gemini(browser)
-        except RuntimeError:
+            # BUG FIX: previously we then called find_signed_in_gemini /
+            # get_gemini_page, which would either return a stale gemini.google.com/app
+            # tab still showing CACHED UI (post-logout, the page reads as "signed in"
+            # because the React app doesn't refresh until a hard reload) — or open
+            # a new Gemini tab that Google immediately redirects to gemini.google.com
+            # /app from the post-logout cookie state. Either way, login_via_google_human::
+            # _pick_best_page picked that gemini-looking page, Phase 1b's "no Sign-in
+            # CTA + prompt input present → assumed signed in" branch falsely returned
+            # success, and the rotation never actually entered new credentials.
+            #
+            # Force-resignin path now: close every remaining Gemini tab in the context,
+            # open a fresh tab, and HARD-NAVIGATE it to accounts.google.com/AccountChooser
+            # so login_via_google_human starts on a known clean Google sign-in page —
+            # no cached Gemini UI to fool _pick_best_page.
+            import time as _t
             context = browser.contexts[0]
-            page = gm.get_gemini_page(context)
+            closed_extra = 0
+            for p in list(context.pages):
+                if "gemini.google.com" in (p.url or ""):
+                    try:
+                        p.close()
+                        closed_extra += 1
+                    except Exception:
+                        pass
+            if closed_extra:
+                print(f"[gemini] closed {closed_extra} additional Gemini tabs that reappeared after logout")
+            page = context.new_page()
+            try:
+                # Use continue=gemini.google.com/app so Google routes the
+                # post-sign-in redirect through to Gemini. Without continue=,
+                # Google parks the user on myaccount.google.com and Phase 4's
+                # "wait for gemini.google.com" times out even though sign-in
+                # succeeded.
+                chooser_url = (
+                    "https://accounts.google.com/AccountChooser"
+                    "?continue=https%3A%2F%2Fgemini.google.com%2Fapp"
+                )
+                print(f"[gemini] navigating to AccountChooser with continue=gemini.google.com/app")
+                page.goto(chooser_url, wait_until="domcontentloaded", timeout=30_000)
+                _t.sleep(2)
+            except Exception as e:
+                print(f"[gemini] navigation to AccountChooser warning: {e}")
+        else:
+            # Non-rotation (first-time) path: try to find an existing signed-in
+            # Gemini tab; otherwise open a fresh one.
+            try:
+                context, page = gm.find_signed_in_gemini(browser)
+            except RuntimeError:
+                context = browser.contexts[0]
+                page = gm.get_gemini_page(context)
     except Exception as e:
         print(f"[gemini] cannot attach to Chrome :{port} — {e}")
         return 3

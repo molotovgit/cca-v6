@@ -420,6 +420,42 @@ def login_via_google_human(page: Page, email: str, password: str, cdp_port: int,
         print("[login] page-read pause (3-6s)...")
         human_delay(3.0, 6.0)
 
+        # Phase 2a: handle the account-chooser page that Google shows AFTER a
+        # /Logout (rotation case). The chooser lists previously-used accounts
+        # plus a "Use another account" / "Использовать другой аккаунт" link.
+        # Without clicking that link there's no email field — fill_field_via_paste
+        # below would time out. Detect the chooser by the presence of the link
+        # OR by the absence of input[type="email"], and click through.
+        chooser_selectors = [
+            '[data-identifier="-1"]',                             # Google's internal id for "Use another account"
+            'div[role="link"]:has-text("Use another account")',
+            'div[role="link"]:has-text("другой аккаунт")',         # Russian: "Использовать другой аккаунт"
+            'div[role="button"]:has-text("Use another account")',
+            'div[role="button"]:has-text("другой аккаунт")',
+            'a:has-text("Use another account")',
+            'a:has-text("другой аккаунт")',
+            'li:has-text("Use another account")',
+            'li:has-text("другой аккаунт")',
+        ]
+        chooser_bbox = None
+        for sel in chooser_selectors:
+            chooser_bbox = _bbox_of_first_visible(cur, sel)
+            if chooser_bbox:
+                print(f"[login] account-chooser detected; clicking 'Use another account' (selector: {sel})")
+                break
+        if chooser_bbox:
+            human_click(cur, chooser_bbox["x"] + chooser_bbox["w"] / 2,
+                        chooser_bbox["y"] + chooser_bbox["h"] / 2)
+            # Wait for the email-entry page to load
+            try:
+                cur.wait_for_selector('input[type="email"]', timeout=15_000)
+            except Exception:
+                pass
+            human_delay(1.5, 3.0)
+            cur = _pick_best_page()
+            cur.bring_to_front()
+            _check_blockers(cur)
+
         print(f"[login] entering email via clipboard paste: {email}")
         _check_blockers(cur)
         fill_field_via_paste(cur, 'input[type="email"]', email, timeout_s=20)
