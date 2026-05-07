@@ -230,32 +230,51 @@ def main() -> None:
         except Exception as e:
             raise SystemExit(f"[prompts] auto-login failed: {e}")
 
-    print("[prompts] opening fresh conversation")
-    cg.new_conversation(page)
-
     raw_batches = []
     parsed_entries = []
 
+    # Each batch opens its OWN conversation. The previous design sent batch 1
+    # with full context and batches 2-4 as "continue" follow-ups in the same
+    # conversation. This consistently failed at batch 4/4 with a 300s timeout
+    # ("no new assistant message; assistant count unchanged") because ChatGPT
+    # silently throttles after ~3 long-output turns in a single conversation.
+    # Independent conversations are slower (each one re-sends the formula +
+    # refined chapter, ~10k input chars × 4) but every batch is the FIRST
+    # message in a fresh conversation, so the throttle never triggers.
     for batch_idx in range(NUM_BATCHES):
         start = batch_idx * BATCH_SIZE + 1
         end = start + BATCH_SIZE - 1
 
-        if batch_idx == 0:
-            prompt = (
-                formula.strip()
-                + "\n\n---\n\n"
-                + STRUCTURED_OUTPUT_INSTRUCTION
-                + "\n\n---\n\nSOURCE TEXT (refined chapter):\n\n"
-                + refined.strip()
-            )
-            print(f"\n[prompts] batch {batch_idx + 1}/{NUM_BATCHES} ({start}-{end}) — sending formula + refined text ({len(prompt):,} chars)")
-        else:
-            prompt = (
-                f"Continue with prompts {start}-{end}. "
-                f"Return ONLY the JSON array for this batch (no fences, no commentary). "
-                f"Same four fields per entry: idx, slug, image_prompt, motion_script."
-            )
-            print(f"\n[prompts] batch {batch_idx + 1}/{NUM_BATCHES} ({start}-{end}) — sending continuation")
+        # Approximate which quarter of the chronological story this batch
+        # should cover, so ChatGPT (which has no memory of the other batches)
+        # focuses on the right segment of the chapter narrative.
+        seg_pct_lo = batch_idx * (100 // NUM_BATCHES)
+        seg_pct_hi = (batch_idx + 1) * (100 // NUM_BATCHES)
+        batch_instruction = (
+            "OUTPUT FORMAT (strict — machine-parsable):\n"
+            f"Return ONLY a JSON array of {BATCH_SIZE} entries, no markdown fences, no commentary before or after.\n"
+            "Each entry MUST have these four fields:\n"
+            "  - idx: integer for this scene\n"
+            "  - slug: short kebab-case identifier (3-6 words summarizing the scene)\n"
+            "  - image_prompt: the full prompt ending with the locked style line\n"
+            "  - motion_script: a short Veo motion description if the source text shows meaningful motion in this scene, otherwise null\n\n"
+            "Example of a single entry:\n"
+            '{"idx": 1, "slug": "germanic-tribes-misty-forest", "image_prompt": "Ancient northern Europe wide forest landscape... clean cinematic historical illustration, slightly simplified, semi-realistic, smooth shading, sharp edges, no brush texture, no paint effect, full-frame, no text, no borders", "motion_script": "drone shot slowly panning across the misty forest"}\n\n'
+            f"For THIS batch, return prompts {start} through {end} only — index the entries {start}, {start+1}, ..., {end}.\n"
+            f"The 80-scene story is CHRONOLOGICAL across the chapter; this batch covers approximately the {seg_pct_lo}%-{seg_pct_hi}% segment of the chapter narrative. Stay within that segment of the story."
+        )
+
+        print(f"\n[prompts] batch {batch_idx + 1}/{NUM_BATCHES} ({start}-{end}) — opening fresh conversation")
+        cg.new_conversation(page)
+
+        prompt = (
+            formula.strip()
+            + "\n\n---\n\n"
+            + batch_instruction
+            + "\n\n---\n\nSOURCE TEXT (refined chapter):\n\n"
+            + refined.strip()
+        )
+        print(f"[prompts]   sending {len(prompt):,} chars")
 
         t0 = time.time()
         response = cg.send_and_collect(page, prompt, max_ms=args.max_seconds_per_batch * 1000)
