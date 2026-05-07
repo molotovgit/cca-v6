@@ -303,6 +303,35 @@ function snapshot() {
     saved_indices: safeJSON(path.join(REPO, '.cca', 'saved_indices.json'), null),
     tab_map:       safeJSON(path.join(REPO, '.cca', 'tab_map.json'), null),
   };
+
+  // Account rotation status — read accounts.json + .cca/active_accounts.json
+  // and produce a per-provider summary the UI can render.
+  const accountsJson    = safeJSON(path.join(REPO, 'accounts.json'), null);
+  const activeAccounts  = safeJSON(path.join(REPO, '.cca', 'active_accounts.json'), {}) || {};
+  out.accounts = { providers: {} };
+  if (accountsJson) {
+    for (const provider of ['chatgpt', 'gemini']) {
+      const list = Array.isArray(accountsJson[provider]) ? accountsJson[provider] : [];
+      const stateForProvider = activeAccounts[provider] || {};
+      const idx = Number.isInteger(stateForProvider.index) ? stateForProvider.index : 0;
+      const safeIdx = (idx >= 0 && idx < list.length) ? idx : 0;
+      const acct = list[safeIdx] || {};
+      out.accounts.providers[provider] = {
+        total:        list.length,
+        activeIndex:  safeIdx,
+        activeLabel:  acct.label || stateForProvider.label || '—',
+        activeEmail:  acct.email || '—',
+        // 1-based "accounts used" — primary alone = 1, after one rotation = 2, etc.
+        used:         Math.min(list.length, safeIdx + 1),
+        remaining:    Math.max(0, list.length - safeIdx - 1),
+        list:         list.map((a, i) => ({
+          label:  a.label || ('acct-' + (i + 1)),
+          email:  a.email || '—',
+          active: i === safeIdx,
+        })),
+      };
+    }
+  }
   // Risk
   if (out.state && out.state.currentLesson) {
     out.risk = classifyRisk(out.state.currentLesson.subject, out.state.currentLesson.chapter, out.state.currentLesson.title);
@@ -498,6 +527,19 @@ body { background: radial-gradient(circle at 10% 0%, #16203a 0%, #0a0e1a 60%) fi
 
   <div class="grid grid-stages" id="stages-grid"></div>
 
+  <!-- ─── Account rotation panel ─── -->
+  <div class="card" id="accounts-card" style="margin-bottom: 22px;">
+    <h3 style="display:flex; align-items:center; gap:14px;">
+      ◆ Account rotation
+      <span style="font-weight:400; color:var(--dim); font-size:11px;">
+        (active account + how many have been used so far)
+      </span>
+    </h3>
+    <div id="accounts-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 18px;">
+      <div class="empty">waiting for accounts.json...</div>
+    </div>
+  </div>
+
   <div class="grid cards-3">
     <div class="card">
       <h3>◆ Image generation — saved on disk</h3>
@@ -586,6 +628,56 @@ function renderStages(state) {
   }
 }
 
+function renderAccounts(accounts) {
+  const grid = document.getElementById('accounts-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  if (!accounts || !accounts.providers || Object.keys(accounts.providers).length === 0) {
+    grid.appendChild(el('div', 'empty', 'no accounts.json yet'));
+    return;
+  }
+  for (const [provider, info] of Object.entries(accounts.providers)) {
+    const card = el('div');
+    card.style.cssText = 'background: var(--bg-1); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;';
+    const head = el('div');
+    head.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px;';
+    head.innerHTML =
+      '<div style="font-weight:700; letter-spacing:0.5px; text-transform:uppercase; font-size:12px; color:var(--accent);">' + provider + '</div>' +
+      '<div style="font-size:11px; color:var(--dim);">' +
+        '<span style="color:var(--ok); font-weight:700;">' + info.used + '</span>' +
+        ' of ' + info.total + ' used · ' +
+        info.remaining + ' remaining' +
+      '</div>';
+    card.appendChild(head);
+    // Active row
+    const active = el('div');
+    active.style.cssText = 'background: rgba(74,222,128,0.10); border:1px solid rgba(74,222,128,0.32); border-radius:7px; padding:8px 11px; margin-bottom:8px; font-size:13px;';
+    active.innerHTML =
+      '<div style="font-size:10px; color:var(--ok); font-weight:700; letter-spacing:0.4px; margin-bottom:3px;">⏵ CURRENTLY ACTIVE — index ' + info.activeIndex + '</div>' +
+      '<div><strong>' + info.activeLabel + '</strong> · <span style="color:var(--dim);">' + info.activeEmail + '</span></div>';
+    card.appendChild(active);
+    // Full list with active highlighted
+    const list = el('div');
+    list.style.cssText = 'font-size:11.5px; color:var(--dim); display:flex; flex-direction:column; gap:3px;';
+    info.list.forEach((a, i) => {
+      const row = el('div');
+      const isActive = a.active;
+      const isPast   = i < info.activeIndex;
+      row.style.cssText = 'display:flex; gap:10px; padding:3px 8px; border-radius:5px;' +
+        (isActive ? 'background:rgba(74,222,128,0.06); color:var(--txt);' :
+         isPast   ? 'color:var(--dim); text-decoration:line-through;' :
+                    'color:var(--dim);');
+      row.innerHTML =
+        '<span style="width:18px;">' + (isActive ? '▶' : (isPast ? '✓' : '·')) + '</span>' +
+        '<span style="width:90px;">[' + a.label + ']</span>' +
+        '<span>' + a.email + '</span>';
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+    grid.appendChild(card);
+  }
+}
+
 function renderImageGrid(saved, pending, total) {
   const grid = document.getElementById('image-grid');
   grid.innerHTML = '';
@@ -645,6 +737,9 @@ async function tick() {
   }
 
   renderStages(s.state);
+
+  // Account rotation panel
+  renderAccounts(s.accounts);
 
   // Image grid
   const total = (s.diskCounts && s.diskCounts.promptsCount) || 80;
