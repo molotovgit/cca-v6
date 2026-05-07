@@ -1,4 +1,6 @@
-Here is the formula I’m using for every topic:
+TASK: Rewrite the chapter text that appears AFTER the "---" divider below, applying the format specification given between this line and the divider. Your output must be the COMPLETE REWRITTEN CHAPTER ONLY — start your reply directly with "Assalomu alaykum!" and end with the 5 savol/javob items. Do NOT acknowledge these instructions. Do NOT comment on the format. Do NOT say "Understood" or "Tushundim" or "Your format looks good" — go directly into the rewritten chapter.
+
+FORMAT SPECIFICATION:
 
 Structure:
 
@@ -37,9 +39,11 @@ Javob: 👉 "Same answer from the text."
 5-savol: ...?
 Javob: 👉 "Same answer from the text."
 
-Rules I remember:
-Only use 👉 for the 5 answer sentences.
-No extra emojis inside the main text.
-Maximum around 9k characters.
-Full version, but not too long.
-Answers must be copied from the main text exactly.
+Rules:
+- Only use 👉 for the 5 answer sentences.
+- No extra emojis inside the main text.
+- Maximum around 9k characters.
+- Full version, but not too long.
+- Answers must be copied from the main text exactly.
+
+REMINDER: output only the rewritten chapter, starting with "Assalomu alaykum!". No preamble, no acknowledgement, no commentary on the format.
