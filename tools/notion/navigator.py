@@ -185,9 +185,21 @@ class NotionNavigator:
             })
         return subpages
 
+    # Apostrophe variants used by Uzbek transliteration. Notion typically stores
+    # U+2018 (left single quote) when users type O' on Mac; the launcher and the
+    # SUBJECT_ALIASES table use plain ASCII U+0027. Without normalization, a
+    # character-by-character compare misses every match. Strip them all at
+    # comparison time so "O'zbekiston", "O'zbekiston", "O'zbekiston", and
+    # "Ozbekiston" all collapse to "ozbekiston".
+    _APOS_RE = re.compile(r"['‘’ʼ`´]")
+
+    @classmethod
+    def _norm_subject(cls, s: str) -> str:
+        return cls._APOS_RE.sub("", s.lower().strip())
+
     def _subject_matches(self, notion_title: str, target: str, grade: int = 0) -> bool:
-        nt = notion_title.lower().strip()
-        tt = target.lower().strip()
+        nt = self._norm_subject(notion_title)
+        tt = self._norm_subject(target)
 
         if nt == tt:
             return True
@@ -201,11 +213,11 @@ class NotionNavigator:
             excluded_keys.add("tarix")
 
         for canonical, variations in SUBJECT_ALIASES.items():
-            if canonical in excluded_keys:
+            cn = self._norm_subject(canonical)
+            if cn in excluded_keys:
                 continue
-            target_in_group = tt == canonical or tt in variations
-            notion_in_group = nt == canonical or nt in variations
-            if target_in_group and notion_in_group:
+            forms = {cn} | {self._norm_subject(v) for v in variations}
+            if tt in forms and nt in forms:
                 return True
 
         return False
