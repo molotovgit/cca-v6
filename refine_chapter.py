@@ -152,31 +152,68 @@ def main() -> None:
         )
 
     print("[refine] opening fresh conversation")
-    cg.new_conversation(page)
-
-    prompt = formula.strip() + "\n\n---\n\n" + source.strip()
-    print(f"[refine] sending prompt ({len(prompt):,} chars) to ChatGPT...")
-    t0 = time.time()
-    response = cg.send_and_collect(page, prompt, max_ms=args.max_seconds * 1000)
-    dt = time.time() - t0
-    print(f"[refine] response received ({len(response):,} chars in {dt:.1f}s)")
-
-    # Length validation: the refined chapter must be 5,000–9,000 characters.
-    # Below 5k almost always means ChatGPT returned a meta-acknowledgement
-    # ("Tushundim. Sizning format...") instead of the rewritten chapter, or
-    # was cut off. Fail loudly — and DO NOT write the bad output to disk —
-    # so the stage fails clean and the next run re-attempts REFINE from
-    # scratch (rather than the file-existence skip silently re-using bad
-    # content).
     REFINE_MIN_CHARS = 5000
     REFINE_MAX_CHARS = 9000
-    rlen = len(response)
-    if rlen < REFINE_MIN_CHARS or rlen > REFINE_MAX_CHARS:
-        kind = "too short — likely a meta-acknowledgement, not the rewritten chapter" if rlen < REFINE_MIN_CHARS else "too long — exceeds the 9k cap"
-        # First 200 chars of the response so we can see WHAT ChatGPT actually returned
+    REFINE_TARGET    = 7500   # used in retry instructions
+    MAX_REFINE_ATTEMPTS = 3
+
+    base_prompt = formula.strip() + "\n\n---\n\n" + source.strip()
+    response = None
+    rlen = 0
+    last_kind = None
+
+    for attempt in range(1, MAX_REFINE_ATTEMPTS + 1):
+        cg.new_conversation(page)
+
+        if attempt == 1:
+            prompt = base_prompt
+            print(f"[refine] attempt {attempt}/{MAX_REFINE_ATTEMPTS}: sending {len(prompt):,} chars to ChatGPT...")
+        else:
+            # Retry preamble: tell ChatGPT specifically how the previous
+            # attempt was wrong and what to target. ChatGPT routinely
+            # overshoots ~9000-9500 even with the "max 9000" rule in the
+            # formula; explicit "your last try was X chars, target N" works.
+            if last_kind == "too_long":
+                preamble = (
+                    f"PREVIOUS ATTEMPT FAILED — your last response was {rlen:,} characters, "
+                    f"but the HARD MAXIMUM is {REFINE_MAX_CHARS:,}. Output a TRIMMED version of "
+                    f"~{REFINE_TARGET:,} characters. Keep the structure, opening, all 5 👉 markers, "
+                    f"conclusion, all 5 questions. Cut redundant adjectives, transitions, and any "
+                    f"repeated explanations. Do NOT acknowledge this — output only the trimmed chapter."
+                )
+            else:  # too_short
+                preamble = (
+                    f"PREVIOUS ATTEMPT FAILED — your last response was {rlen:,} characters, "
+                    f"but the HARD MINIMUM is {REFINE_MIN_CHARS:,}. Output an EXPANDED version of "
+                    f"~{REFINE_TARGET:,} characters with more historical detail and more dramatic "
+                    f"narrative. Keep the structure, opening, all 5 👉 markers, conclusion, all 5 "
+                    f"questions. Do NOT acknowledge this — output only the expanded chapter."
+                )
+            prompt = preamble + "\n\n---\n\n" + base_prompt
+            print(f"[refine] attempt {attempt}/{MAX_REFINE_ATTEMPTS}: retry with {('trim' if last_kind=='too_long' else 'expand')} instruction ({len(prompt):,} chars)")
+
+        t0 = time.time()
+        response = cg.send_and_collect(page, prompt, max_ms=args.max_seconds * 1000)
+        dt = time.time() - t0
+        rlen = len(response)
+        print(f"[refine]   response received ({rlen:,} chars in {dt:.1f}s)")
+
+        if REFINE_MIN_CHARS <= rlen <= REFINE_MAX_CHARS:
+            print(f"[refine]   ✓ in range; accepting (attempt {attempt})")
+            break
+        last_kind = "too_long" if rlen > REFINE_MAX_CHARS else "too_short"
+        if attempt < MAX_REFINE_ATTEMPTS:
+            head = response[:120].replace("\n", " | ")
+            print(f"[refine]   ✗ out of range ({last_kind}); first 120c: {head}")
+            print(f"[refine]   retrying...")
+
+    # After all attempts, if still out of range, fail without writing.
+    if not (REFINE_MIN_CHARS <= rlen <= REFINE_MAX_CHARS):
+        kind = "too short — likely a meta-acknowledgement" if rlen < REFINE_MIN_CHARS else "too long — exceeds the 9k cap"
         head = response[:200].replace("\n", " | ")
         raise SystemExit(
-            f"[refine] OUT-OF-BOUNDS output: {rlen:,} chars (allowed: {REFINE_MIN_CHARS:,}-{REFINE_MAX_CHARS:,}) — {kind}\n"
+            f"[refine] OUT-OF-BOUNDS after {MAX_REFINE_ATTEMPTS} attempts: {rlen:,} chars "
+            f"(allowed: {REFINE_MIN_CHARS:,}-{REFINE_MAX_CHARS:,}) — {kind}\n"
             f"        first 200 chars: {head}\n"
             f"        not writing to disk; next run will re-attempt REFINE."
         )
