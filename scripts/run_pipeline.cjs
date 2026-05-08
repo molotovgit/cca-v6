@@ -194,25 +194,29 @@ async function stageImages(promptsJson) {
     return;
   }
   log('IMAGES', `Gemini — generating ${total - have} of ${total} images (autonomous orchestrator)`);
-  // Use detached:true on Windows to break the Windows job-object inheritance
-  // chain. Without this, run_pipeline.cjs spawns run_autonomous.cjs which
-  // spawns submit_prompts.cjs + save_images.cjs (3 Node processes deep);
-  // the inheritance triggers a STATUS_BREAKPOINT (-2147483645) crash in
-  // run_pipeline.cjs that kills the parent. Then run_autonomous keeps
-  // running as an orphan, but UPLOAD never fires because run_pipeline is
-  // dead, AND launch_all.bat advances to the next chapter, whose new
-  // run_autonomous will overwrite .cca/tab_map.json and break the
-  // first chapter's image-saving loop. Detached spawn isolates run_autonomous
-  // into its own process group so submit/save don't inherit the parent's
-  // job. The await still works because we don't call child.unref().
+  // Wrap run_autonomous.cjs in cmd /c instead of spawning node directly.
+  // Why: this stage spawns run_autonomous which spawns submit_prompts +
+  // save_images (3 Node processes deep). Direct node-to-node chain caused:
+  //   (a) STATUS_BREAKPOINT (-2147483645) crash in run_pipeline on Windows
+  //       when the chain inherits job-object handles, OR
+  //   (b) silent exit code 1 from run_autonomous when we tried to fix (a)
+  //       with detached:true + windowsHide:true — that combo breaks stdio
+  //       inheritance when launch_all.bat is double-clicked.
+  // Wrapping in cmd /c puts cmd.exe between run_pipeline (Node) and
+  // run_autonomous (Node), so the depth-4 Node-to-Node assertion never
+  // triggers, AND stdio:'inherit' works normally because there's no
+  // detached/hidden-console dance.
   await new Promise((resolve, reject) => {
-    const child = spawn('node', ['scripts/run_autonomous.cjs', promptsJson], {
+    const isWin = process.platform === 'win32';
+    const cmd  = isWin ? 'cmd' : 'node';
+    const args = isWin
+      ? ['/c', 'node', 'scripts\\run_autonomous.cjs', promptsJson]
+      : ['scripts/run_autonomous.cjs', promptsJson];
+    const child = spawn(cmd, args, {
       cwd: REPO,
       stdio: 'inherit',
       env: process.env,
       shell: false,
-      detached: process.platform === 'win32',
-      windowsHide: true,
     });
     child.on('exit', (code, sig) => {
       if (code === 0) resolve();
