@@ -194,7 +194,32 @@ async function stageImages(promptsJson) {
     return;
   }
   log('IMAGES', `Gemini — generating ${total - have} of ${total} images (autonomous orchestrator)`);
-  await runChild('node', ['scripts/run_autonomous.cjs', promptsJson]);
+  // Use detached:true on Windows to break the Windows job-object inheritance
+  // chain. Without this, run_pipeline.cjs spawns run_autonomous.cjs which
+  // spawns submit_prompts.cjs + save_images.cjs (3 Node processes deep);
+  // the inheritance triggers a STATUS_BREAKPOINT (-2147483645) crash in
+  // run_pipeline.cjs that kills the parent. Then run_autonomous keeps
+  // running as an orphan, but UPLOAD never fires because run_pipeline is
+  // dead, AND launch_all.bat advances to the next chapter, whose new
+  // run_autonomous will overwrite .cca/tab_map.json and break the
+  // first chapter's image-saving loop. Detached spawn isolates run_autonomous
+  // into its own process group so submit/save don't inherit the parent's
+  // job. The await still works because we don't call child.unref().
+  await new Promise((resolve, reject) => {
+    const child = spawn('node', ['scripts/run_autonomous.cjs', promptsJson], {
+      cwd: REPO,
+      stdio: 'inherit',
+      env: process.env,
+      shell: false,
+      detached: process.platform === 'win32',
+      windowsHide: true,
+    });
+    child.on('exit', (code, sig) => {
+      if (code === 0) resolve();
+      else reject(new Error(`run_autonomous.cjs exited code=${code} sig=${sig}`));
+    });
+    child.on('error', reject);
+  });
   const after = countFiles(imagesDir, '.png', 10 * 1024);
   if (after < total) throw new Error(`image stage finished with only ${after}/${total}`);
 }
