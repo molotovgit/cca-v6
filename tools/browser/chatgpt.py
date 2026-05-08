@@ -284,21 +284,41 @@ def send_prompt(page: Page, text: str) -> int:
         "() => document.querySelectorAll('[data-message-author-role=\"assistant\"]').length"
     )
 
-    # Submit via keyboard Enter rather than clicking the Send button.
-    # The previous code used _find_one(SEL["send_button"]) + mouse.click(send.x, send.y),
-    # which fails silently on long prompts: when ~10k+ characters are typed
-    # into ChatGPT's contenteditable, the input grows past 5,000 px tall and
-    # pushes the Send button below the viewport. The bbox returned by the
-    # selector is at coordinates the click can't actually reach, so the
-    # message just sits in the input forever and wait_for_response times
-    # out at 360s.
-    #
-    # Plain Enter submits in ChatGPT (Shift+Enter inserts newline). We've
-    # already used Shift+Enter for embedded newlines while typing above,
-    # so a final Enter here just submits the form regardless of where
-    # the Send button actually is.
+    # Submit via Playwright's locator.click(), NOT keyboard Enter and NOT
+    # mouse.click(bbox). Two earlier approaches failed:
+    #   1. Original: _find_one(SEL["send_button"]) + page.mouse.click(bbox.x, bbox.y).
+    #      Fails on long prompts because the typed text expands the
+    #      contenteditable past viewport height; the bbox coords end up
+    #      off-screen and the click lands on nothing.
+    #   2. keyboard.press("Enter"). Doesn't submit — current ChatGPT
+    #      contenteditable interprets a focused-input Enter as a newline,
+    #      not a submit.
+    # Playwright's locator.click() auto-scrolls the element into view,
+    # auto-waits for it to be actionable (visible, enabled, stable), and
+    # dispatches the click via the actual DOM element rather than screen
+    # coordinates. Verified live: a manual locator.click on a typed-but-
+    # unsubmitted 10K-char prompt successfully submitted within 1 second.
     time.sleep(0.3)
-    page.keyboard.press("Enter")
+    submitted = False
+    for sel in (
+        'button[data-testid="send-button"]',
+        'button[aria-label*="Send" i]',
+        '#composer-submit-button',
+        'button:has-text("Send")',
+    ):
+        try:
+            btn = page.locator(sel).first
+            if btn.count() > 0:
+                btn.click(timeout=10_000)
+                submitted = True
+                break
+        except Exception:
+            continue
+    if not submitted:
+        # Last-resort fallback: try keyboard Enter (in case ChatGPT's
+        # behavior changes back, or for an edge case where the button is
+        # hidden but Enter works).
+        page.keyboard.press("Enter")
     return baseline
 
 
