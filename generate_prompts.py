@@ -302,7 +302,14 @@ def main() -> None:
             print(f"[prompts]   sending {len(prompt):,} chars")
 
             t0 = time.time()
-            response = cg.send_and_collect(page, prompt, max_ms=args.max_seconds_per_batch * 1000)
+            try:
+                response = cg.send_and_collect(page, prompt, max_ms=args.max_seconds_per_batch * 1000)
+            except cg.ChatGPTRateLimitError as e:
+                # Distinct exit code 50 — caught by run_pipeline.cjs to trigger
+                # ChatGPT account rotation and stage retry. Don't try the
+                # other 2 in-stage retries; the rate-limit won't clear in 30s.
+                print(f"[prompts] CHATGPT_RATE_LIMIT: {e}")
+                sys.exit(50)
             dt = time.time() - t0
             print(f"[prompts]   response received: {len(response):,} chars in {dt:.1f}s")
 

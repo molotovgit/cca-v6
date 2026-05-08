@@ -193,7 +193,13 @@ def main() -> None:
             print(f"[refine] attempt {attempt}/{MAX_REFINE_ATTEMPTS}: retry with {('trim' if last_kind=='too_long' else 'expand')} instruction ({len(prompt):,} chars)")
 
         t0 = time.time()
-        response = cg.send_and_collect(page, prompt, max_ms=args.max_seconds * 1000)
+        try:
+            response = cg.send_and_collect(page, prompt, max_ms=args.max_seconds * 1000)
+        except cg.ChatGPTRateLimitError as e:
+            # Distinct exit code 50 — caught by run_pipeline.cjs to trigger
+            # ChatGPT account rotation and stage retry.
+            print(f"[refine] CHATGPT_RATE_LIMIT: {e}")
+            sys.exit(50)
         dt = time.time() - t0
         rlen = len(response)
         print(f"[refine]   response received ({rlen:,} chars in {dt:.1f}s)")

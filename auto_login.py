@@ -61,11 +61,85 @@ def _classify_error(msg: str) -> int:
     return 3  # transient/unknown
 
 
-def login_chatgpt(pw, port: int, email: str, password: str) -> int:
+def _force_signout_chatgpt(context, port: int) -> None:
+    """Sign OUT of the current ChatGPT/Google session before signing in to a
+    different account (rotation case).
+
+    Mirrors _force_signout_gemini: ChatGPT auth is Google SSO, so the cached
+    Google session in cookies is what would let the new sign-in attempt land
+    on the WRONG (still-valid old) account. We:
+      1. Open a fresh anchor tab so the context isn't empty when we close others.
+      2. Close every pre-existing chatgpt.com / openai.com / google.com tab
+         (their cached UI is what fools the post-login verification).
+      3. Navigate the anchor to ChatGPT's logout endpoint (kills the session
+         cookie), then to accounts.google.com/Logout (kills the Google SSO
+         cookie). Order matters — if we hit Google first, ChatGPT may still
+         hold a refresh token that re-authenticates the OLD account on the
+         next /api/auth/session call.
+      4. Hard-navigate the anchor to chatgpt.com/auth/login so login_via_google
+         starts on a known clean state with no cached UI to fool _click_first_visible.
+    """
+    import time
+
+    # 1. Anchor first
+    anchor = context.new_page()
+
+    # 2. Close every pre-existing ChatGPT/OpenAI/Google tab
+    closed = 0
+    for p in list(context.pages):
+        if p is anchor:
+            continue
+        url = (p.url or "")
+        if ("chatgpt.com" in url or "openai.com" in url or
+                "google.com" in url):
+            try:
+                p.close()
+                closed += 1
+            except Exception:
+                pass
+    if closed:
+        print(f"[chatgpt] closed {closed} stale ChatGPT/OpenAI/Google tabs before sign-out")
+        time.sleep(1)
+
+    # 3a. ChatGPT-side sign-out
+    try:
+        print("[chatgpt] force sign-out (rotation): chatgpt.com/api/auth/logout")
+        anchor.goto("https://chatgpt.com/api/auth/logout",
+                    wait_until="domcontentloaded", timeout=30_000)
+        time.sleep(2)
+    except Exception as e:
+        print(f"[chatgpt] force-signout (chatgpt) warning: {e}")
+
+    # 3b. Google-side sign-out (kills the SSO cookie)
+    try:
+        print("[chatgpt] force sign-out (rotation): accounts.google.com/Logout")
+        anchor.goto("https://accounts.google.com/Logout",
+                    wait_until="domcontentloaded", timeout=30_000)
+        time.sleep(3)
+    except Exception as e:
+        print(f"[chatgpt] force-signout (google) warning: {e}")
+
+    # 4. Hard-navigate to a clean ChatGPT login page so login_via_google
+    #    doesn't pick a stale chatgpt.com tab still rendering "logged in" UI.
+    try:
+        anchor.goto("https://chatgpt.com/auth/login",
+                    wait_until="domcontentloaded", timeout=30_000)
+        time.sleep(2)
+    except Exception as e:
+        print(f"[chatgpt] navigation to /auth/login warning: {e}")
+
+
+def login_chatgpt(pw, port: int, email: str, password: str, *,
+                  force_resignin: bool = False) -> int:
     """Sign in to ChatGPT in the Chrome instance at `port`. `pw` is a live
     sync_playwright handle managed by the caller (one instance for the whole
-    process — separate sync_playwright().start() calls conflict)."""
-    print(f"\n=== ChatGPT auto-login on :{port} ===")
+    process — separate sync_playwright().start() calls conflict).
+
+    If `force_resignin` is True (rotation case), explicitly sign out the
+    current Google + ChatGPT session before signing in with the new creds.
+    """
+    label = "(FORCE RESIGN-IN)" if force_resignin else ""
+    print(f"\n=== ChatGPT auto-login on :{port} {label}===")
     if not email or not password:
         print("[chatgpt] no credentials in .env — skipping")
         return 0
@@ -75,11 +149,22 @@ def login_chatgpt(pw, port: int, email: str, password: str) -> int:
             print(f"[chatgpt] connected to :{port} but no contexts found")
             return 3
         context = browser.contexts[0]
+        if force_resignin:
+            _force_signout_chatgpt(context, port)
+            page = None
+            for p in context.pages:
+                u = (p.url or "")
+                if "chatgpt.com" in u:
+                    page = p
+                    break
+            if page is None:
+                page = cg.get_or_open_chatgpt_page(context)
+        else:
+            page = cg.get_or_open_chatgpt_page(context)
     except Exception as e:
         print(f"[chatgpt] cannot attach to Chrome :{port} — {e}")
         return 3
     try:
-        page = cg.get_or_open_chatgpt_page(context)
         cg.ensure_logged_in(page, email, password, cdp_port=port)
         print("[chatgpt] OK — signed in")
         return 0
@@ -296,7 +381,8 @@ def main() -> None:
     # "using Playwright Sync API inside the asyncio loop".
     with sync_playwright() as pw:
         if not args.skip_chatgpt:
-            rc_cg = login_chatgpt(pw, args.chatgpt_port, cg_creds["email"], cg_creds["password"])
+            rc_cg = login_chatgpt(pw, args.chatgpt_port, cg_creds["email"], cg_creds["password"],
+                                  force_resignin=args.force_resignin)
         if not args.skip_gemini:
             rc_gm = login_gemini(pw, args.gemini_port, gm_creds["email"], gm_creds["password"],
                                  force_resignin=args.force_resignin)

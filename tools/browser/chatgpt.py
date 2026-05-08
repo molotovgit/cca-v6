@@ -44,6 +44,17 @@ CHATGPT_URL = "https://chatgpt.com/"
 CHATGPT_URL_PATTERN = re.compile(r"chatgpt\.com|chat\.openai\.com")
 
 
+class ChatGPTRateLimitError(RuntimeError):
+    """Raised by wait_for_response when no assistant message arrives within the
+    deadline. The most common cause is OpenAI's free-tier soft rate-limit on the
+    active account ("we've reached our limit on requests"), but the same surface
+    shows for any condition where the assistant turn never starts (banner
+    blocking, account flagged, message quota hit). All recoverable via account
+    rotation, so the orchestrator (run_pipeline.cjs) treats this as a signal to
+    rotate the active ChatGPT account and retry the stage.
+    """
+
+
 SEL = {
     "prompt_input": [
         ("css",   "#prompt-textarea[contenteditable=true]"),
@@ -346,7 +357,10 @@ def wait_for_response(page: Page, baseline_count: int,
         baseline_count,
     )
     if not text:
-        raise RuntimeError(
+        # Distinct subclass — run_pipeline.cjs catches the propagated exit code
+        # 50 (set in refine_chapter.py / generate_prompts.py when this exception
+        # bubbles up) and rotates to the next ChatGPT account in accounts.json.
+        raise ChatGPTRateLimitError(
             f"no new assistant message after {max_ms / 1000:.0f}s. "
             f"baseline was {baseline_count}; assistant count unchanged."
         )

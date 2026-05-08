@@ -43,7 +43,7 @@ const CONFIG = {
 };
 // ────────────────────────────────────────────────────────────────────────────
 
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const path      = require('path');
 const fs        = require('fs');
 const http      = require('http');
@@ -104,6 +104,102 @@ function runChild(cmd, args, env = {}) {
   });
 }
 
+// Same as runChild but resolves with the exit code instead of rejecting on
+// non-zero. Caller is responsible for inspecting the code (e.g. ChatGPT rate-
+// limit signal = 50, see refine_chapter.py / generate_prompts.py).
+function runChildExitCode(cmd, args, env = {}) {
+  return new Promise(resolve => {
+    const child = spawn(cmd, args, {
+      cwd: REPO,
+      stdio: 'inherit',
+      env: { ...process.env, ...env },
+      shell: false,
+    });
+    child.on('exit', code => resolve(code ?? 1));
+    child.on('error', () => resolve(1));
+  });
+}
+
+// ── ChatGPT account rotation (run_pipeline-level) ──────────────────────────
+// Triggered when refine_chapter.py / generate_prompts.py exit with code 50
+// (the ChatGPTRateLimitError sentinel from tools/browser/chatgpt.py).
+//
+// Mechanics mirror run_autonomous.cjs's Gemini rotation, but the trigger is
+// stage-level rather than alert-driven (no per-tab signal to inspect — REFINE
+// and PROMPTS are single-conversation calls that simply time out when the
+// account is rate-limited):
+//   1. Advance accounts.json pointer:  python -m tools.accounts rotate chatgpt
+//   2. Force sign-out + sign-in on :9222: python auto_login.py --skip-gemini --force-resignin
+//   3. Caller retries the failed stage from the top.
+//
+// Returns 'ok' | 'exhausted' | 'login_failed'.
+const MAX_CHATGPT_ROTATIONS = envInt('CCA_MAX_CHATGPT_ROTATIONS', 5);
+
+function runShell(cmd, args, opts = {}) {
+  const r = spawnSync(cmd, args, { cwd: REPO, encoding: 'utf-8', ...opts });
+  return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+}
+
+async function rotateChatgpt() {
+  log('CHATGPT-ROT', `attempting rotation (rate-limit detected on current account)`);
+  const rot = runShell(PYTHON, ['-m', 'tools.accounts', 'rotate', 'chatgpt']);
+  if (rot.code === 2) {
+    log('CHATGPT-ROT', `EXHAUSTED — no more chatgpt accounts in accounts.json`);
+    log('CHATGPT-ROT', `add another entry to chatgpt[] in accounts.json and re-run`);
+    return 'exhausted';
+  }
+  if (rot.code !== 0) {
+    log('CHATGPT-ROT', `accounts.py rotate failed: ${rot.stderr.trim()}`);
+    return 'login_failed';
+  }
+  let newAccount = {};
+  try { newAccount = JSON.parse(rot.stdout); } catch (_) {}
+  log('CHATGPT-ROT', `rotated to chatgpt account: [${newAccount.label || '?'} #${newAccount.index ?? '?'}] ${newAccount.email || '?'}`);
+
+  // Propagate new creds to process.env so children spawned by runChildExitCode
+  // (which inherits process.env) see the rotated account. Without this, the
+  // python script's ensure_logged_in() fallback to login_via_google would use
+  // the OLD .env-derived creds if the post-rotation browser ever falls back
+  // to the login surface.
+  if (newAccount.email && newAccount.password) {
+    process.env.CHATGPT_EMAIL    = newAccount.email;
+    process.env.CHATGPT_PASSWORD = newAccount.password;
+  }
+
+  // Force sign-out + sign-in on the ChatGPT Chrome (:9222 only).
+  const login = runShell(PYTHON, ['auto_login.py', '--skip-gemini', '--force-resignin'], { stdio: 'inherit' });
+  if (login.code !== 0) {
+    log('CHATGPT-ROT', `auto_login failed for new chatgpt account (rc=${login.code})`);
+    return 'login_failed';
+  }
+  log('CHATGPT-ROT', `new chatgpt account signed in successfully`);
+  return 'ok';
+}
+
+// Run a Python stage that uses ChatGPT (refine_chapter.py / generate_prompts.py),
+// rotating to the next chatgpt account in accounts.json on exit code 50.
+// `stageName` is just for logging.
+async function runChatgptStage(stageName, pyScript, pyArgs, env = {}) {
+  for (let attempt = 0; attempt <= MAX_CHATGPT_ROTATIONS; attempt++) {
+    const rc = await runChildExitCode(PYTHON, [pyScript, ...pyArgs], env);
+    if (rc === 0) return;
+    if (rc === 50) {
+      log(stageName, `ChatGPT rate-limit (exit 50) on attempt ${attempt + 1}/${MAX_CHATGPT_ROTATIONS + 1}`);
+      if (attempt >= MAX_CHATGPT_ROTATIONS) {
+        throw new Error(`${stageName} hit ChatGPT rate-limit after ${MAX_CHATGPT_ROTATIONS} rotations — all accounts exhausted or still throttled`);
+      }
+      const result = await rotateChatgpt();
+      if (result !== 'ok') {
+        throw new Error(`${stageName} cannot rotate chatgpt account (${result}) — halting`);
+      }
+      log(stageName, `retrying after rotation`);
+      continue;
+    }
+    throw new Error(`${pyScript} exited code=${rc} (non-rate-limit failure)`);
+  }
+  throw new Error(`${stageName} exhausted retries`);
+}
+
 function findChapterFile(stage, ext = '.md') {
   // Find ch{NN}-*.{ext} (excluding .meta.json / .raw.md) in the stage folder
   const subjectSlug = slugify(CONFIG.SUBJECT);
@@ -147,8 +243,7 @@ async function stageRefine() {
     return;
   }
   log('REFINE', `ChatGPT — refining chapter (this can take 3-6 min)`);
-  await runChild(PYTHON, [
-    'refine_chapter.py',
+  await runChatgptStage('REFINE', 'refine_chapter.py', [
     '--grade',   String(CONFIG.GRADE),
     '--lang',    CONFIG.LANG,
     '--subject', CONFIG.SUBJECT,
@@ -170,8 +265,7 @@ async function stagePrompts() {
     } catch (_) {}
   }
   log('PROMPTS', `ChatGPT — generating 80 prompts in 4 batches (~10-20 min)`);
-  await runChild(PYTHON, [
-    'generate_prompts.py',
+  await runChatgptStage('PROMPTS', 'generate_prompts.py', [
     '--grade',   String(CONFIG.GRADE),
     '--lang',    CONFIG.LANG,
     '--subject', CONFIG.SUBJECT,
