@@ -63,19 +63,29 @@ class NotionNavigator:
         logger.warning(f"Subject '{target_subject}' not found under grade {grade}/{language}")
         return None
 
+    # Part-page patterns. Real part titles look like "1-qism", "2-kitob",
+    # "Часть 1", "I-qism", "Part 2" etc. — always at the start of the title.
+    # Two anchoring rules to prevent over-matching natural Uzbek/Russian
+    # chapter titles:
+    #   1. Pattern anchored to ^\s* so only the title's leading token is
+    #      eligible. Otherwise "ikki qismga" inside chapter 7 of ozbekiston
+    #      tarixi (G8) was matching [IVX]+\s*-?\s*qism — the lowercase 'i'
+    #      in 'ikki' under re.IGNORECASE, plus 'qism' substring of 'qismga'.
+    #   2. Word boundary \b after 'qism' / 'kitob' / 'part' / 'book' so
+    #      'qismga', 'kitobxon', etc. don't match.
     _PART_PATTERNS = [
-        r"\d+\s*-?\s*qism",
-        r"qism\s*\d+",
-        r"[IVX]+\s*-?\s*qism",
-        r"\d+\s*-?\s*kitob",
-        r"kitob\s*\d+",
-        r"часть\s*\d+",
-        r"\d+\s*-?я?\s*часть",
-        r"часть\s*[IVX]+",
-        r"книга\s*\d+",
-        r"part\s*\d+",
-        r"\d+\s*-?\s*part",
-        r"book\s*\d+",
+        r"^\s*\d+\s*-?\s*qism\b",
+        r"^\s*qism\s*\d+\b",
+        r"^\s*[IVX]+\s*-?\s*qism\b",
+        r"^\s*\d+\s*-?\s*kitob\b",
+        r"^\s*kitob\s*\d+\b",
+        r"^\s*часть\s*\d+\b",
+        r"^\s*\d+\s*-?я?\s*часть\b",
+        r"^\s*часть\s*[IVX]+\b",
+        r"^\s*книга\s*\d+\b",
+        r"^\s*part\s*\d+\b",
+        r"^\s*\d+\s*-?\s*part\b",
+        r"^\s*book\s*\d+\b",
     ]
 
     def _is_part_page(self, title: str) -> bool:
