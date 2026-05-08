@@ -70,8 +70,40 @@ def find_signed_in_gemini(browser) -> tuple:
     (separate context). We scan both and pick whichever has the chat interface
     available (prompt input visible).
 
-    Returns (context, page). Raises if no signed-in Gemini tab anywhere.
+    Returns (context, page). Raises RuntimeError if no SIGNED-IN Gemini tab is
+    found, including the case where a signed-OUT tab exists (caller should then
+    open a fresh tab and run SSO instead of treating the signed-out tab as the
+    target).
+
+    BUG FIX: previous version scored +10 for textarea, -5 for visible Sign-in
+    CTA, then unconditionally returned the highest-scoring tab. The signed-out
+    Gemini landing page renders BOTH a guest-preview textarea AND a Sign-in
+    button → net score +5 → false-positive "signed in", and the caller skipped
+    the actual sign-in flow. The downstream IMAGES stage then failed with
+    'Send message button not found' because guest UI doesn't render the Send
+    arrow.
+
+    New scoring uses harder weights and a threshold:
+      +10 textarea visible (chat input)
+      -50 Sign-in CTA visible  (HARD signed-out signal — overwhelms textarea)
+      +5  signed-in marker visible (avatar / account button / settings)
+    Threshold for "signed in": score >= 8.
     """
+    SIGNED_IN_INDICATORS = (
+        'img[alt*="Google Account" i]',
+        'a[href*="myaccount.google.com"]',
+        'button[aria-label*="Google Account" i]',
+        'button[aria-label*="Account" i][aria-haspopup]',
+    )
+    SIGN_IN_CTAS = (
+        'a:has-text("Sign in")',
+        'button:has-text("Sign in")',
+        'a:has-text("Войти")',     # ru
+        'button:has-text("Войти")',
+        'a:has-text("Kirish")',    # uz
+    )
+    THRESHOLD = 8
+
     all_gemini = []  # list of (ctx, page, score)
     for ctx in browser.contexts:
         for p in ctx.pages:
@@ -79,13 +111,21 @@ def find_signed_in_gemini(browser) -> tuple:
                 url = p.url or ""
                 if "gemini.google.com" not in url:
                     continue
-                # Score by signals of being signed in
                 score = 0
                 if _bbox_of_first_visible(p, 'rich-textarea, [contenteditable="true"][role="textbox"], textarea'):
                     score += 10
-                # Lower score if Sign in button is visible (means signed out)
-                if _bbox_of_first_visible(p, 'a:has-text("Sign in"), button:has-text("Sign in")'):
-                    score -= 5
+                # Visible Sign-in CTA is a HARD "this is the logged-out page"
+                # signal — must overwhelm the textarea bonus.
+                for sel in SIGN_IN_CTAS:
+                    if _bbox_of_first_visible(p, sel):
+                        score -= 50
+                        break
+                # Bonus: any account-management surface only renders for a
+                # signed-in session.
+                for sel in SIGNED_IN_INDICATORS:
+                    if _bbox_of_first_visible(p, sel):
+                        score += 5
+                        break
                 all_gemini.append((ctx, p, score))
             except Exception:
                 continue
@@ -93,9 +133,16 @@ def find_signed_in_gemini(browser) -> tuple:
     if not all_gemini:
         raise RuntimeError("no gemini.google.com tab found in any context — log in to Gemini in the keepalive window first")
 
-    # Pick highest-scoring tab; prefer signed-in
+    # Pick highest-scoring tab; require it to clear the threshold.
     all_gemini.sort(key=lambda x: -x[2])
     ctx, page, score = all_gemini[0]
+    if score < THRESHOLD:
+        raise RuntimeError(
+            f"no SIGNED-IN gemini.google.com tab found "
+            f"(best score {score} < {THRESHOLD}); caller should open a fresh tab "
+            f"and run SSO. Likely cause: the existing tab is on the signed-out "
+            f"landing page (textarea + Sign-in CTA both visible)."
+        )
     print(f"[gem] picked Gemini tab (score={score}) in context {browser.contexts.index(ctx)}")
     return ctx, page
 
@@ -281,35 +328,76 @@ def _host(url: str) -> str:
 # ─── Sign-in flow ───
 
 def is_signed_in_to_gemini(page: Page) -> bool:
-    """Strict signed-in check — looks for a visible Sign-in CTA (means NOT signed in)
-    OR for a prompt input (means signed in). URL alone isn't sufficient because
-    gemini.google.com hosts both the signed-out landing page AND the app.
+    """Strict signed-in check.
+
+    BUG FIX: previous version had two failure modes:
+      1. is_visible(timeout=500) on the Sign-in CTA loses to React's hydration
+         on a signed-out /app page — at t=500ms the CTA element exists in DOM
+         but isn't yet rendered, is_visible returns False, and we fall through
+         to the textarea check.
+      2. The textarea-presence-only fallback returns True on the signed-out
+         landing page because Gemini renders a guest-preview textarea even when
+         logged out.
+
+    New check:
+      - Wait for DOM hydration (load + a brief delay) so visibility checks are
+        reliable.
+      - Hard-fail (return False) if ANY Sign-in CTA is visible.
+      - Hard-pass (return True) only when textarea visible AND a positive
+        signed-in marker (avatar / account button) is also visible.
+      - If the textarea is visible but no signed-in marker, return False —
+        this is the signed-out landing page case.
     """
     h = _host(page.url)
     if not h.endswith("gemini.google.com"):
         return False
 
-    # If a Sign-in CTA is visible, we're definitely NOT signed in.
-    # NOTE: removed `a[href*="accounts.google.com"]` — false-positive on
-    # signed-in /app pages which contain benign account-management links to
-    # accounts.google.com in headers/menus.
+    # Give React time to render the chrome. Most signed-in pages have settled
+    # within 1.5s; signed-out pages render the Sign-in CTA in the same window.
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=3_000)
+    except Exception:
+        pass
+    import time as _t
+    _t.sleep(0.8)
+
+    # HARD signed-out signal: any Sign-in CTA visible → not signed in.
     for sel in [
         'a:has-text("Sign in")',
         'button:has-text("Sign in")',
         'a:has-text("Try Gemini")',
+        'a:has-text("Войти")',
+        'button:has-text("Войти")',
+        'a:has-text("Kirish")',
     ]:
         try:
             loc = page.locator(sel).first
-            if loc.count() > 0 and loc.is_visible(timeout=500):
+            if loc.count() > 0 and loc.is_visible(timeout=1_500):
                 return False
         except Exception:
             continue
 
-    # If a prompt input exists, definitely signed in
-    if _bbox_of_first_visible(page, 'rich-textarea, [contenteditable="true"][role="textbox"], textarea'):
-        return True
+    has_textarea = bool(_bbox_of_first_visible(
+        page, 'rich-textarea, [contenteditable="true"][role="textbox"], textarea'
+    ))
+    if not has_textarea:
+        return False
 
-    # Ambiguous — assume not signed in (forces login attempt, which is idempotent)
+    # Positive signed-in marker — only renders for an authenticated session.
+    for sel in (
+        'img[alt*="Google Account" i]',
+        'a[href*="myaccount.google.com"]',
+        'button[aria-label*="Google Account" i]',
+        'button[aria-label*="Account" i][aria-haspopup]',
+    ):
+        try:
+            loc = page.locator(sel).first
+            if loc.count() > 0 and loc.is_visible(timeout=1_500):
+                return True
+        except Exception:
+            continue
+
+    # Textarea but no signed-in marker → signed-out landing page (guest preview).
     return False
 
 
