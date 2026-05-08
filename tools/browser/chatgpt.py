@@ -269,16 +269,17 @@ def send_prompt(page: Page, text: str) -> int:
     page.mouse.click(prompt.x + 20, prompt.y + 20, delay=30)
     time.sleep(0.2)
 
-    # Type — Shift+Enter = newline, plain Enter would submit early.
-    lines = text.split("\n")
-    for i, line in enumerate(lines):
-        if line:
-            page.keyboard.type(line, delay=1)
-        if i < len(lines) - 1:
-            page.keyboard.down("Shift")
-            page.keyboard.press("Enter")
-            page.keyboard.up("Shift")
-    time.sleep(0.4)
+    # Bulk-paste the entire prompt at once via keyboard.insert_text() rather
+    # than character-by-character keyboard.type() with delay=1. The
+    # char-by-char approach measured at ~25 chars/sec on a long prompt
+    # (~5+ minutes for a 10K-char prompt) because ChatGPT's contenteditable
+    # reflows on every keystroke and Playwright auto-waits for the page to
+    # settle between characters. insert_text bypasses keydown/keyup events
+    # and writes the whole string at once, completing in well under a
+    # second regardless of length. Newlines (\n) inside the string are
+    # interpreted as newlines by contenteditable — which is what we want.
+    page.keyboard.insert_text(text)
+    time.sleep(0.6)
 
     baseline = page.evaluate(
         "() => document.querySelectorAll('[data-message-author-role=\"assistant\"]').length"
