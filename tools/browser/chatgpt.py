@@ -284,15 +284,21 @@ def send_prompt(page: Page, text: str) -> int:
         "() => document.querySelectorAll('[data-message-author-role=\"assistant\"]').length"
     )
 
-    send = _find_one(page, SEL["send_button"], timeout_ms=8000)
-    if not send:
-        cands = _dump_candidates(page, "button")
-        raise RuntimeError(
-            f"send button not found.\n"
-            f"Top candidates: {cands[:10]}\n"
-            f"Patch tools/browser/chatgpt.py SEL['send_button']."
-        )
-    page.mouse.click(send.x + send.w / 2, send.y + send.h / 2, delay=30)
+    # Submit via keyboard Enter rather than clicking the Send button.
+    # The previous code used _find_one(SEL["send_button"]) + mouse.click(send.x, send.y),
+    # which fails silently on long prompts: when ~10k+ characters are typed
+    # into ChatGPT's contenteditable, the input grows past 5,000 px tall and
+    # pushes the Send button below the viewport. The bbox returned by the
+    # selector is at coordinates the click can't actually reach, so the
+    # message just sits in the input forever and wait_for_response times
+    # out at 360s.
+    #
+    # Plain Enter submits in ChatGPT (Shift+Enter inserts newline). We've
+    # already used Shift+Enter for embedded newlines while typing above,
+    # so a final Enter here just submits the form regardless of where
+    # the Send button actually is.
+    time.sleep(0.3)
+    page.keyboard.press("Enter")
     return baseline
 
 
