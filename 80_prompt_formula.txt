@@ -35,6 +35,9 @@ VISUAL FORMAT
 
 Full-frame image
 Edge-to-edge composition
+Single unified scene — one continuous frame
+No panels, no triptych, no split-screen, no comic strip layout
+No vertical or horizontal divider lines inside the image
 No text inside image
 No labels
 No borders
@@ -45,7 +48,7 @@ No paper texture
 STYLE LINE
 Every prompt must end with this exact style line:
 
-clean cinematic historical illustration, slightly simplified, semi-realistic, smooth shading, sharp edges, no brush texture, no paint effect, full-frame, no text, no borders
+clean cinematic historical illustration, slightly simplified, semi-realistic, smooth shading, sharp edges, no brush texture, no paint effect, full-frame, no text, no borders, single unified scene, no panels, no triptych, no split-screen, no comic strip layout, no vertical or horizontal divider lines, one cohesive frame, 4K UHD resolution, 2560x1440, 16:9 widescreen aspect ratio, ultra high definition, ultra sharp, highly detailed, crisp edges, fine detail, professional editorial quality, no blur, no compression
 
 QUALITY
 
@@ -98,4 +101,4 @@ style line
 
 EXAMPLE PROMPT
 
-Ancient Central Asia wide steppe landscape with a fortified city in the distance, clean stone walls and simple towers, a few small human figures walking near the walls with no faces, open terrain with subtle grass and earth textures, soft daylight with smooth sky and minimal clouds, balanced and readable composition, clean cinematic historical illustration, slightly simplified, semi-realistic, smooth shading, sharp edges, no brush texture, no paint effect, full-frame, no text, no borders
+Ancient Central Asia wide steppe landscape with a fortified city in the distance, clean stone walls and simple towers, a few small human figures walking near the walls with no faces, open terrain with subtle grass and earth textures, soft daylight with smooth sky and minimal clouds, balanced and readable composition, clean cinematic historical illustration, slightly simplified, semi-realistic, smooth shading, sharp edges, no brush texture, no paint effect, full-frame, no text, no borders, single unified scene, no panels, no triptych, no split-screen, no comic strip layout, no vertical or horizontal divider lines, one cohesive frame, 4K UHD resolution, 2560x1440, 16:9 widescreen aspect ratio, ultra high definition, ultra sharp, highly detailed, crisp edges, fine detail, professional editorial quality, no blur, no compression
